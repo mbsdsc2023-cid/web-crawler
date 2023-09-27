@@ -8,6 +8,7 @@ use url::Url;
 
 mod cli;
 mod crawler;
+mod test;
 
 fn main() -> eyre::Result<()> {
     env::set_var("RUST_LOG", "info");
