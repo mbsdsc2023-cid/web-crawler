@@ -42,7 +42,7 @@ fn main() -> eyre::Result<()> {
                 _ => unreachable!(),
             };
 
-            info!("Found flag at {}({}): {}", url, i, text);
+            info!("Found flag at {}({}): {:?}", url, i, text);
         }
 
         thread::sleep(Duration::from_millis(10));
