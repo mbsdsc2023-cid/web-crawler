@@ -2,13 +2,16 @@ use std::borrow::Borrow;
 use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
 
+use log::error;
+use regex::Regex;
 use reqwest::blocking::Client;
+use select::node::{Data, Raw};
 use select::{document::Document, predicate::Name};
 use thiserror::Error;
 use url::{ParseError, Url};
 
 #[derive(Debug, Error)]
-pub enum GetLinksError {
+pub enum ExtractorError {
     #[error("Failed to send a request")]
     SendRequest(#[source] reqwest::Error),
     #[error("Failed to read the response body")]
@@ -17,6 +20,42 @@ pub enum GetLinksError {
     AbsolutizeUrl(#[source] url::ParseError),
     #[error("Server returned an error")]
     ServerError(#[source] reqwest::Error),
+}
+
+pub struct FlagExtractor {
+    client: Client,
+    regex: Regex,
+}
+
+impl FlagExtractor {
+    pub fn new(client: Client, regex: Regex) -> Self {
+        Self { client, regex }
+    }
+
+    pub fn get_nodes(&self, url: Url) -> Result<Vec<Raw>, ExtractorError> {
+        let res = self
+            .client
+            .get(url)
+            .send()
+            .map_err(|e| ExtractorError::SendRequest(e))?;
+        let res = res
+            .error_for_status()
+            .map_err(|e| ExtractorError::ServerError(e))?;
+        let body = res.text().map_err(|e| ExtractorError::ResponseBody(e))?;
+        let doc = Document::from(body.as_str());
+
+        let mut nodes = Vec::new();
+
+        for node in doc.nodes {
+            if let Data::Text(ref text) = node.data {
+                if self.regex.is_match(&text.to_string()) {
+                    nodes.push(node);
+                }
+            }
+        }
+
+        Ok(nodes)
+    }
 }
 
 pub struct LinkExtractor {
@@ -28,17 +67,17 @@ impl LinkExtractor {
         Self { client }
     }
 
-    pub fn get_links(&self, url: Url) -> Result<Vec<Url>, GetLinksError> {
+    pub fn get_links(&self, url: Url) -> Result<Vec<Url>, ExtractorError> {
         let res = self
             .client
             .get(url)
             .send()
-            .map_err(|e| GetLinksError::SendRequest(e))?;
+            .map_err(|e| ExtractorError::SendRequest(e))?;
         let res = res
             .error_for_status()
-            .map_err(|e| GetLinksError::ServerError(e))?;
+            .map_err(|e| ExtractorError::ServerError(e))?;
         let base_url = res.url().clone();
-        let body = res.text().map_err(|e| GetLinksError::ResponseBody(e))?;
+        let body = res.text().map_err(|e| ExtractorError::ResponseBody(e))?;
         let doc = Document::from(body.as_str());
         let mut links = Vec::new();
 
@@ -47,7 +86,7 @@ impl LinkExtractor {
                 Ok(url) => url,
                 Err(ParseError::RelativeUrlWithoutBase) => base_url
                     .join(href)
-                    .map_err(|e| GetLinksError::AbsolutizeUrl(e))?,
+                    .map_err(|e| ExtractorError::AbsolutizeUrl(e))?,
                 _ => continue,
             };
             url.set_fragment(None);
@@ -60,6 +99,20 @@ impl LinkExtractor {
         }
 
         Ok(links)
+    }
+}
+
+impl AdjacentNodes for LinkExtractor {
+    type Node = Url;
+
+    fn adjacent_nodes(&self, v: &Self::Node) -> Vec<Self::Node> {
+        match self.get_links(v.clone()) {
+            Ok(v) => v,
+            Err(err) => {
+                error!("{}: {:?}", err, err);
+                Vec::new()
+            }
+        }
     }
 }
 

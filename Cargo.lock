@@ -1469,6 +1469,7 @@ dependencies = [
  "env_logger",
  "eyre",
  "log",
+ "regex",
  "reqwest",
  "select",
  "thiserror",
