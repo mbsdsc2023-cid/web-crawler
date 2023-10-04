@@ -59,25 +59,29 @@ impl FlagExtractor {
 }
 
 pub struct LinkExtractor {
-    client: Client,
+    client: reqwest::Client,
 }
 
 impl LinkExtractor {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: reqwest::Client) -> Self {
         Self { client }
     }
 
-    pub fn get_links(&self, url: Url) -> Result<Vec<Url>, ExtractorError> {
+    pub async fn get_links(&self, url: Url) -> Result<Vec<Url>, ExtractorError> {
         let res = self
             .client
             .get(url)
             .send()
+            .await
             .map_err(|e| ExtractorError::SendRequest(e))?;
         let res = res
             .error_for_status()
             .map_err(|e| ExtractorError::ServerError(e))?;
         let base_url = res.url().clone();
-        let body = res.text().map_err(|e| ExtractorError::ResponseBody(e))?;
+        let body = res
+            .text()
+            .await
+            .map_err(|e| ExtractorError::ResponseBody(e))?;
         let doc = Document::from(body.as_str());
         let mut links = Vec::new();
 
@@ -102,19 +106,19 @@ impl LinkExtractor {
     }
 }
 
-impl AdjacentNodes for LinkExtractor {
-    type Node = Url;
+// impl AdjacentNodes for LinkExtractor {
+//     type Node = Url;
 
-    fn adjacent_nodes(&self, v: &Self::Node) -> Vec<Self::Node> {
-        match self.get_links(v.clone()) {
-            Ok(v) => v,
-            Err(err) => {
-                error!("{}: {:?}", err, err);
-                Vec::new()
-            }
-        }
-    }
-}
+//     fn adjacent_nodes(&self, v: &Self::Node) -> Vec<Self::Node> {
+//         match self.get_links(v.clone()) {
+//             Ok(v) => v,
+//             Err(err) => {
+//                 error!("{}: {:?}", err, err);
+//                 Vec::new()
+//             }
+//         }
+//     }
+// }
 
 pub trait AdjacentNodes {
     type Node;
