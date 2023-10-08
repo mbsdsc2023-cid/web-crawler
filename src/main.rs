@@ -13,23 +13,14 @@ mod cli;
 mod crawler;
 mod test;
 
-// TODO: exits other way?
-const DASHBOARD_HTML: &'static str = include_str!("../dashboard.html");
-
 #[derive(Deserialize)]
 struct Index {
     url: String,
     page_cnt: usize,
 }
 
-// TODO
-#[get("/dashboard.html")]
-async fn dashboard() -> impl Responder {
-    DASHBOARD_HTML
-}
-
-#[get("/")]
-async fn index(index: web::Query<Index>) -> impl Responder {
+#[get("/request")]
+async fn request(index: web::Query<Index>) -> impl Responder {
     // TODO extractor not must be async method?
     let url = Url::parse(&index.url).unwrap();
     let client = ClientBuilder::new().build().unwrap();
@@ -54,7 +45,10 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(|| {
         let cors = Cors::default().allow_any_origin();
-        App::new().wrap(cors).service(index)
+        App::new()
+            //.service(actix_files::Files::new("/", "./public").index_file("index.html"))
+            .service(request)
+            .wrap(cors)
     })
     .bind("127.0.0.1:8080")?
     .run()
