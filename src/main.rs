@@ -1,11 +1,17 @@
 use std::env;
+use std::sync::Arc;
+use std::thread;
 
+use crate::crawler::Crawler;
+use crate::crawler::FlagExtractor;
 use crate::crawler::LinkExtractor;
 
 use actix_cors::Cors;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use log::{error, info};
-use reqwest::ClientBuilder;
+use regex::Regex;
+use reqwest::blocking::ClientBuilder;
+use select::node::Data;
 use serde::Deserialize;
 use serde::Serialize;
 use url::Url;
@@ -22,29 +28,58 @@ struct Request {
 
 #[derive(Serialize)]
 struct RequestResult {
-    links: Vec<String>,
+    found: Vec<(String, Vec<String>)>,
+}
+
+fn execute(url: Url, count: usize) -> RequestResult {
+    let client = ClientBuilder::new().build().unwrap();
+    let link_extractor = LinkExtractor::new(client.clone());
+    let flag_extractor =
+        FlagExtractor::new(client.clone(), Regex::new(r"MBSD\{[0-9a-zA-Z]+\}").unwrap());
+    let crawler = Crawler::new(&link_extractor, url);
+    let mut found = Vec::new();
+
+    for url in crawler.take(count) {
+        if url.as_str().contains(".xml") {
+            continue;
+        }
+
+        let nodes = match flag_extractor.get_nodes(url.clone()) {
+            Ok(nodes) => nodes,
+            Err(err) => {
+                error!("{}: {:?}", err, err);
+                continue;
+            }
+        };
+
+        let mut texts = Vec::new();
+
+        for node in nodes {
+            let text = match node.data {
+                Data::Text(text) => text.to_string(),
+                _ => continue,
+            };
+
+            texts.push(text);
+        }
+
+        found.push((url.to_string(), texts));
+    }
+
+    RequestResult { found }
 }
 
 #[get("/request")]
-async fn request(index: web::Query<Request>) -> HttpResponse {
-    // TODO extractor not must be async method?
-    let url = Url::parse(&index.url).unwrap();
-    let client = ClientBuilder::new().build().unwrap();
-    let link_extractor = LinkExtractor::new(client);
-    match link_extractor.get_links(url).await {
-        Ok(links) => {
-            for l in links.iter() {
-                println!("{}", l);
-            }
-            HttpResponse::Ok().json(RequestResult {
-                links: links.iter().map(|l| l.to_string()).collect(),
-            })
-        }
-        Err(err) => {
-            error!("{}", err);
-            HttpResponse::Ok().json(RequestResult { links: vec![] })
-        }
-    }
+async fn request(query: web::Query<Request>) -> HttpResponse {
+    // TODO: remove adjacent nodes trait
+    let res = Arc::new(None);
+    let res_clone = Arc::clone(&res);
+    let handle = thread::spawn(move || {
+        *res_clone = Some(execute(Url::parse(&query.url).unwrap(), query.page_cnt))
+    });
+    handle.join().unwrap();
+
+    HttpResponse::Ok().json((*res).unwrap())
 }
 
 #[actix_web::main]
