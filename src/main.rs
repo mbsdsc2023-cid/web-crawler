@@ -7,7 +7,7 @@ use crate::crawler::FlagExtractor;
 use crate::crawler::LinkExtractor;
 
 use actix_cors::Cors;
-use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, web, App, HttpResponse, HttpServer};
 use log::{error, info};
 use regex::Regex;
 use reqwest::blocking::ClientBuilder;
@@ -16,9 +16,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use url::Url;
 
-mod cli;
 mod crawler;
-mod test;
 
 #[derive(Deserialize)]
 struct Request {
@@ -72,14 +70,15 @@ fn execute(url: Url, count: usize) -> RequestResult {
 #[get("/request")]
 async fn request(query: web::Query<Request>) -> HttpResponse {
     // TODO: remove adjacent nodes trait
-    let res = Arc::new(None);
-    let res_clone = Arc::clone(&res);
-    let handle = thread::spawn(move || {
-        *res_clone = Some(execute(Url::parse(&query.url).unwrap(), query.page_cnt))
-    });
-    handle.join().unwrap();
+    // let res = Arc::new(None);
+    // let res_clone = Arc::clone(&res);
+    // let handle = thread::spawn(move || {
+    //     *res_clone = Some(execute(Url::parse(&query.url).unwrap(), query.page_cnt))
+    // });
+    // handle.join().unwrap();
 
-    HttpResponse::Ok().json((*res).unwrap())
+    // HttpResponse::Ok().json((*res).unwrap())
+    HttpResponse::Ok().json("")
 }
 
 #[actix_web::main]

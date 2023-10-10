@@ -1,6 +1,0 @@
-[tasks.run]
-description = "Run web crawler"
-script = ['''
-cargo build
-cargo run -- https://mbsdsc2023-cid.github.io/sample-site 10
-''']
