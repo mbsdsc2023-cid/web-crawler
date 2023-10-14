@@ -1,92 +1,107 @@
-use std::borrow::Borrow;
-use std::collections::{HashSet, VecDeque};
-use std::hash::Hash;
+use std::collections::HashSet;
 
-use log::error;
 use regex::Regex;
-use reqwest::blocking::Client;
-use select::node::{Data, Raw};
-use select::{document::Document, predicate::Name};
+use reqwest::{Client, ClientBuilder};
+use select::{
+    document::Document,
+    node::{Data, Raw},
+    predicate::Name,
+};
 use thiserror::Error;
 use url::{ParseError, Url};
 
 #[derive(Debug, Error)]
-pub enum ExtractorError {
+pub enum CrawlerError {
+    #[error("Failed to build client")]
+    ClientBuilder(#[source] reqwest::Error),
+    #[error("Failed to create regex")]
+    RegexError(#[source] regex::Error),
     #[error("Failed to send a request")]
     SendRequest(#[source] reqwest::Error),
-    #[error("Failed to read the response body")]
-    ResponseBody(#[source] reqwest::Error),
-    #[error("Failed to make this link URL absolute")]
-    AbsolutizeUrl(#[source] url::ParseError),
     #[error("Server returned an error")]
     ServerError(#[source] reqwest::Error),
+    #[error("Failed to read the response body")]
+    ResponseBody(#[source] reqwest::Error),
+    #[error("Failed to parse URL")]
+    ParseUrl(#[source] url::ParseError),
 }
 
-pub struct FlagExtractor {
+pub struct Crawler {
     client: Client,
-    regex: Regex,
+    target_regex: Regex,
+    base_url: Url,
 }
 
-impl FlagExtractor {
-    pub fn new(client: Client, regex: Regex) -> Self {
-        Self { client, regex }
+impl Crawler {
+    pub fn new(target_regex: &str, base_url: &str) -> Result<Self, CrawlerError> {
+        let client = ClientBuilder::new()
+            .build()
+            .map_err(|e| CrawlerError::ClientBuilder(e))?;
+        let target_regex = Regex::new(target_regex).map_err(|e| CrawlerError::RegexError(e))?;
+        let base_url = Url::parse(base_url).map_err(|e| CrawlerError::ParseUrl(e))?;
+
+        Ok(Self {
+            client,
+            target_regex,
+            base_url,
+        })
     }
 
-    pub fn get_nodes(&self, url: Url) -> Result<Vec<Raw>, ExtractorError> {
-        let res = self
-            .client
-            .get(url)
-            .send()
-            .map_err(|e| ExtractorError::SendRequest(e))?;
-        let res = res
-            .error_for_status()
-            .map_err(|e| ExtractorError::ServerError(e))?;
-        let body = res.text().map_err(|e| ExtractorError::ResponseBody(e))?;
-        let doc = Document::from(body.as_str());
+    pub async fn execute(&self) -> Result<Vec<(Url, Vec<String>)>, CrawlerError> {
+        let mut queue = vec![self.base_url.clone()];
+        let mut visited = HashSet::new();
+        let mut result = Vec::new();
 
-        let mut nodes = Vec::new();
+        while let Some(url) = queue.pop() {
+            if visited.contains(&url) {
+                continue;
+            }
 
-        for node in doc.nodes {
-            if let Data::Text(ref text) = node.data {
-                if self.regex.is_match(&text.to_string()) {
-                    nodes.push(node);
+            let links = self.get_links(&url).await?;
+            for link in links {
+                if !visited.contains(&link) {
+                    queue.push(link);
                 }
             }
+
+            let matched_nodes = self.get_matched_nodes(&url).await?;
+            let mut matched_strings = Vec::new();
+            for node in matched_nodes {
+                match node.data {
+                    Data::Text(ref text) => matched_strings.push(text.to_string()),
+                    Data::Comment(ref text) => matched_strings.push(text.to_string()),
+                    Data::Element(_, quals) => {
+                        for (_, ref text) in quals {
+                            let text = text.to_string();
+                            if self.target_regex.is_match(&text) {
+                                matched_strings.push(text);
+                            }
+                        }
+                    }
+                };
+            }
+
+            if matched_strings.len() > 0 {
+                result.push((url.clone(), matched_strings));
+            }
+
+            visited.insert(url);
         }
 
-        Ok(nodes)
-    }
-}
-
-pub struct LinkExtractor {
-    client: Client,
-}
-
-impl LinkExtractor {
-    pub fn new(client: Client) -> Self {
-        Self { client }
+        Ok(result)
     }
 
-    pub fn get_links(&self, url: Url) -> Result<Vec<Url>, ExtractorError> {
-        let res = self
-            .client
-            .get(url)
-            .send()
-            .map_err(|e| ExtractorError::SendRequest(e))?;
-        let res = res
-            .error_for_status()
-            .map_err(|e| ExtractorError::ServerError(e))?;
-        let base_url = res.url().clone();
-        let body = res.text().map_err(|e| ExtractorError::ResponseBody(e))?;
-        let doc = Document::from(body.as_str());
+    async fn get_links(&self, url: &Url) -> Result<Vec<Url>, CrawlerError> {
+        let base_url = url.clone();
+        let doc = self.get_doc(url.clone()).await?;
         let mut links = Vec::new();
 
         for href in doc.find(Name("a")).filter_map(|node| node.attr("href")) {
             let mut url = match Url::parse(href) {
                 Ok(url) => url,
-                Err(ParseError::RelativeUrlWithoutBase) => base_url
-                    .join(href)
-                    .map_err(|e| ExtractorError::AbsolutizeUrl(e))?,
+                Err(ParseError::RelativeUrlWithoutBase) => {
+                    base_url.join(href).map_err(|e| CrawlerError::ParseUrl(e))?
+                }
                 _ => continue,
             };
             url.set_fragment(None);
@@ -100,78 +115,52 @@ impl LinkExtractor {
 
         Ok(links)
     }
-}
 
-impl AdjacentNodes for LinkExtractor {
-    type Node = Url;
+    async fn get_matched_nodes(&self, url: &Url) -> Result<Vec<Raw>, CrawlerError> {
+        let doc = self.get_doc(url.clone()).await?;
+        let mut nodes = Vec::new();
 
-    fn adjacent_nodes(&self, v: &Self::Node) -> Vec<Self::Node> {
-        match self.get_links(v.clone()) {
-            Ok(v) => v,
-            Err(err) => {
-                error!("{}: {:?}", err, err);
-                Vec::new()
-            }
-        }
-    }
-}
-
-pub trait AdjacentNodes {
-    type Node;
-
-    fn adjacent_nodes(&self, v: &Self::Node) -> Vec<Self::Node>;
-}
-
-pub struct Crawler<'a, G: AdjacentNodes> {
-    graph: &'a G,
-    visit: VecDeque<<G as AdjacentNodes>::Node>,
-    visited: HashSet<<G as AdjacentNodes>::Node>,
-}
-
-impl<'a, G> Crawler<'a, G>
-where
-    G: AdjacentNodes,
-    <G as AdjacentNodes>::Node: Clone + Hash + Eq + Borrow<<G as AdjacentNodes>::Node>,
-{
-    pub fn new(graph: &'a G, start: <G as AdjacentNodes>::Node) -> Self {
-        let mut visit = VecDeque::new();
-        let visited = HashSet::new();
-
-        visit.push_back(start);
-
-        Self {
-            graph,
-            visit,
-            visited,
-        }
-    }
-}
-
-impl<'a, G> Iterator for Crawler<'a, G>
-where
-    G: AdjacentNodes,
-    <G as AdjacentNodes>::Node: Clone + Hash + Eq + Borrow<<G as AdjacentNodes>::Node>,
-{
-    type Item = <G as AdjacentNodes>::Node;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(v) = self.visit.pop_front() {
-            if self.visited.contains(&v) {
-                continue;
-            }
-
-            let adj = self.graph.adjacent_nodes(&v);
-            for u in adj.into_iter() {
-                if !self.visited.contains(&u) {
-                    self.visit.push_back(u);
+        for node in doc.nodes {
+            match &node.data {
+                Data::Text(ref text) => {
+                    if self.target_regex.is_match(&text.to_string()) {
+                        nodes.push(node.clone());
+                    }
+                }
+                Data::Comment(ref text) => {
+                    if self.target_regex.is_match(&text.to_string()) {
+                        nodes.push(node.clone());
+                    }
+                }
+                Data::Element(_, quals) => {
+                    for (_, ref text) in quals {
+                        if self.target_regex.is_match(&text.to_string()) {
+                            nodes.push(node.clone());
+                            break;
+                        }
+                    }
                 }
             }
-
-            self.visited.insert(v.clone());
-
-            return Some(v);
         }
 
-        None
+        Ok(nodes)
+    }
+
+    async fn get_doc(&self, url: Url) -> Result<Document, CrawlerError> {
+        let res = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| CrawlerError::SendRequest(e))?;
+        let res = res
+            .error_for_status()
+            .map_err(|e| CrawlerError::ServerError(e))?;
+        let body = res
+            .text()
+            .await
+            .map_err(|e| CrawlerError::ResponseBody(e))?;
+
+        Ok(Document::from(body.as_str()))
     }
 }
