@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::crawler::Crawler;
 
 mod crawler;
+mod test;
 
 const ADDRESS: &'static str = "127.0.0.1:8080";
 
@@ -65,7 +66,6 @@ async fn request(query: web::Query<Request>) -> HttpResponse {
     }
 
     HttpResponse::Ok().json(RequestResult::Ok(results))
-    //HttpResponse::Ok().json(RequestResult::Error("this is error message".to_string()))
 }
 
 #[actix_web::main]
