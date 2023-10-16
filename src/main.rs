@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, time::Instant};
 
 use actix_cors::Cors;
 use actix_web::{get, web, App, HttpResponse, HttpServer};
@@ -18,15 +18,21 @@ struct Request {
 }
 
 #[derive(Debug, Serialize)]
-struct Result {
+struct PageResult {
     url: String,
     matched_strings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct Result {
+    page_results: Vec<PageResult>,
+    elapsed_ms: u128,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 enum RequestResult {
-    Ok(Vec<Result>),
+    Ok(Result),
     Error(String),
 }
 
@@ -34,6 +40,7 @@ enum RequestResult {
 async fn request(query: web::Query<Request>) -> HttpResponse {
     info!("{:?}", query.0);
 
+    let start = Instant::now();
     let crawler = match Crawler::new(r"MBSD\{[0-9a-zA-Z]+\}", &query.url) {
         Ok(c) => c,
         Err(e) => {
@@ -49,23 +56,28 @@ async fn request(query: web::Query<Request>) -> HttpResponse {
             return HttpResponse::Ok().json(RequestResult::Error(e.to_string()));
         }
     };
+    let end = start.elapsed();
+    info!("Crawled time: {}ms", end.as_millis());
 
-    let mut results = Vec::new();
+    let mut page_results = Vec::new();
     for (url, matched_strings) in res {
         if url.as_str().contains(".xml") {
             continue;
         }
 
-        let result = Result {
+        let result = PageResult {
             url: url.to_string(),
             matched_strings,
         };
 
         info!("{:?}", result);
-        results.push(result);
+        page_results.push(result);
     }
 
-    HttpResponse::Ok().json(RequestResult::Ok(results))
+    HttpResponse::Ok().json(RequestResult::Ok(Result {
+        page_results,
+        elapsed_ms: end.as_millis(),
+    }))
 }
 
 #[actix_web::main]
