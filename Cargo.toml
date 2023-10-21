@@ -1,8 +1,11 @@
 [package]
 name = "web-crawler"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
-
+description = "Web crawler tool"
+authors = ["mbsdsc2023-cid (Zakki <zakki0925224@gmail.com>)"]
+license = "MIT"
+repository = "https://github.com/mbsdsc2023-cid/web-crawler"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]

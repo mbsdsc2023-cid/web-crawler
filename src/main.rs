@@ -1,4 +1,4 @@
-use std::{env, time::Instant};
+use std::time::Instant;
 
 use actix_cors::Cors;
 use actix_web::{get, web, App, HttpResponse, HttpServer};
@@ -6,9 +6,10 @@ use crawler::CrawlerResult;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
-use crate::crawler::Crawler;
+use crate::{crawler::Crawler, env::*};
 
 mod crawler;
+mod env;
 
 const ADDRESS: &'static str = "127.0.0.1:8080";
 
@@ -74,8 +75,11 @@ async fn request(query: web::Query<Request>) -> HttpResponse {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    env::set_var("RUST_LOG", "info");
+    std::env::set_var("RUST_LOG", "info");
     env_logger::init();
+
+    info!("{} - {}", ENV_NAME, ENV_DESCRIPTION);
+    info!("Version: {}", ENV_VERSION);
 
     let server = HttpServer::new(|| {
         let cors = Cors::default().allow_any_origin();
