@@ -2,13 +2,13 @@ use std::{env, time::Instant};
 
 use actix_cors::Cors;
 use actix_web::{get, web, App, HttpResponse, HttpServer};
+use crawler::CrawlerResult;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
 use crate::crawler::Crawler;
 
 mod crawler;
-mod test;
 
 const ADDRESS: &'static str = "127.0.0.1:8080";
 
@@ -25,7 +25,7 @@ struct PageResult {
 
 #[derive(Debug, Serialize)]
 struct Result {
-    page_results: Vec<PageResult>,
+    crawler_results: Vec<CrawlerResult>,
     elapsed_ms: u128,
 }
 
@@ -49,7 +49,7 @@ async fn request(query: web::Query<Request>) -> HttpResponse {
         }
     };
 
-    let res = match crawler.execute().await {
+    let mut results = match crawler.execute().await {
         Ok(res) => res,
         Err(e) => {
             error!("{}: {:?}", e, e);
@@ -59,23 +59,15 @@ async fn request(query: web::Query<Request>) -> HttpResponse {
     let end = start.elapsed();
     info!("Crawled time: {}ms", end.as_millis());
 
-    let mut page_results = Vec::new();
-    for (url, matched_strings) in res {
-        if url.as_str().contains(".xml") {
-            continue;
-        }
+    // exclude xml file
+    results.retain(|r| !r.url.as_str().contains(".xml"));
 
-        let result = PageResult {
-            url: url.to_string(),
-            matched_strings,
-        };
-
-        info!("{:?}", result);
-        page_results.push(result);
+    for r in results.iter() {
+        info!("{:?}", r);
     }
 
     HttpResponse::Ok().json(RequestResult::Ok(Result {
-        page_results,
+        crawler_results: results,
         elapsed_ms: end.as_millis(),
     }))
 }

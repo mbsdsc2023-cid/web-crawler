@@ -2,13 +2,17 @@ use std::collections::HashSet;
 
 use regex::Regex;
 use reqwest::{Client, ClientBuilder};
-use select::{
-    document::Document,
-    node::{Data, Raw},
-    predicate::Name,
-};
+use select::{document::Document, node::Data, predicate::Name};
+use serde::Serialize;
 use thiserror::Error;
 use url::{ParseError, Url};
+
+#[derive(Debug, Serialize)]
+pub struct CrawlerResult {
+    pub url: String,
+    pub page_title: String,
+    pub targets: Vec<String>,
+}
 
 #[derive(Debug, Error)]
 pub enum CrawlerError {
@@ -47,10 +51,10 @@ impl Crawler {
         })
     }
 
-    pub async fn execute(&self) -> Result<Vec<(Url, Vec<String>)>, CrawlerError> {
+    pub async fn execute(&self) -> Result<Vec<CrawlerResult>, CrawlerError> {
         let mut queue = vec![self.base_url.clone()];
         let mut visited = HashSet::new();
-        let mut result = Vec::new();
+        let mut results = Vec::new();
 
         while let Some(url) = queue.pop() {
             if visited.contains(&url) {
@@ -64,31 +68,26 @@ impl Crawler {
                 }
             }
 
-            let matched_nodes = self.get_matched_nodes(&url).await?;
-            let mut matched_strings = Vec::new();
-            for node in matched_nodes {
-                match node.data {
-                    Data::Text(ref text) => matched_strings.push(text.to_string()),
-                    Data::Comment(ref text) => matched_strings.push(text.to_string()),
-                    Data::Element(_, quals) => {
-                        for (_, ref text) in quals {
-                            let text = text.to_string();
-                            if self.target_regex.is_match(&text) {
-                                matched_strings.push(text);
-                            }
-                        }
-                    }
-                };
-            }
+            let doc = self.get_doc(url.clone()).await?;
+            let matched_strings = self.get_matched_strings(&doc).await?;
+            let page_title = match self.get_doc_title(&doc).await {
+                Some(title) => title,
+                None => "".to_string(),
+            };
 
             if matched_strings.len() > 0 {
-                result.push((url.clone(), matched_strings));
+                let result = CrawlerResult {
+                    url: url.to_string(),
+                    page_title,
+                    targets: matched_strings,
+                };
+                results.push(result);
             }
 
             visited.insert(url);
         }
 
-        Ok(result)
+        Ok(results)
     }
 
     async fn get_links(&self, url: &Url) -> Result<Vec<Url>, CrawlerError> {
@@ -116,34 +115,36 @@ impl Crawler {
         Ok(links)
     }
 
-    async fn get_matched_nodes(&self, url: &Url) -> Result<Vec<Raw>, CrawlerError> {
-        let doc = self.get_doc(url.clone()).await?;
-        let mut nodes = Vec::new();
+    async fn get_matched_strings(&self, doc: &Document) -> Result<Vec<String>, CrawlerError> {
+        let mut matched_strings = Vec::new();
+        for node in &doc.nodes {
+            let strings = match &node.data {
+                Data::Text(text) | Data::Comment(text) => vec![text.to_string()],
+                Data::Element(_, quals) => quals.iter().map(|(_, text)| text.to_string()).collect(),
+            };
 
-        for node in doc.nodes {
-            match &node.data {
-                Data::Text(ref text) => {
-                    if self.target_regex.is_match(&text.to_string()) {
-                        nodes.push(node.clone());
-                    }
-                }
-                Data::Comment(ref text) => {
-                    if self.target_regex.is_match(&text.to_string()) {
-                        nodes.push(node.clone());
-                    }
-                }
-                Data::Element(_, quals) => {
-                    for (_, ref text) in quals {
-                        if self.target_regex.is_match(&text.to_string()) {
-                            nodes.push(node.clone());
-                            break;
-                        }
-                    }
-                }
-            }
+            matched_strings.extend(strings.iter().flat_map(|s| {
+                self.target_regex
+                    .find_iter(s)
+                    .map(|mat| mat.as_str().to_string())
+            }));
         }
 
-        Ok(nodes)
+        Ok(matched_strings)
+    }
+
+    async fn get_doc_title(&self, doc: &Document) -> Option<String> {
+        let titles: Vec<&str> = doc
+            .find(Name("title"))
+            .filter_map(|node| node.first_child())
+            .filter_map(|node| node.as_text())
+            .collect();
+
+        if titles.len() != 1 {
+            return None;
+        }
+
+        Some(titles[0].to_string())
     }
 
     async fn get_doc(&self, url: Url) -> Result<Document, CrawlerError> {
@@ -156,7 +157,8 @@ impl Crawler {
         let res = res
             .error_for_status()
             .map_err(|e| CrawlerError::ServerError(e))?;
-        let body = res
+
+        let body = &res
             .text()
             .await
             .map_err(|e| CrawlerError::ResponseBody(e))?;
