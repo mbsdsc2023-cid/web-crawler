@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Instant};
 
 use regex::Regex;
 use reqwest::{Client, ClientBuilder};
@@ -12,6 +12,7 @@ pub struct CrawlerResult {
     pub url: String,
     pub page_title: String,
     pub targets: Vec<String>,
+    pub elapsed_ms: u128,
 }
 
 #[derive(Debug, Error)]
@@ -61,6 +62,7 @@ impl Crawler {
                 continue;
             }
 
+            let start = Instant::now();
             let links = self.get_links(&url).await?;
             for link in links {
                 if !visited.contains(&link) {
@@ -75,11 +77,14 @@ impl Crawler {
                 None => "".to_string(),
             };
 
+            let end = start.elapsed();
+
             if matched_strings.len() > 0 {
                 let result = CrawlerResult {
                     url: url.to_string(),
                     page_title,
                     targets: matched_strings,
+                    elapsed_ms: end.as_millis(),
                 };
                 results.push(result);
             }

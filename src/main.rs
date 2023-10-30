@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use actix_cors::Cors;
 use actix_web::{get, web, App, HttpResponse, HttpServer};
 use crawler::CrawlerResult;
@@ -27,7 +25,6 @@ struct PageResult {
 #[derive(Debug, Serialize)]
 struct Result {
     crawler_results: Vec<CrawlerResult>,
-    elapsed_ms: u128,
 }
 
 #[derive(Serialize)]
@@ -41,7 +38,6 @@ enum RequestResult {
 async fn request(query: web::Query<Request>) -> HttpResponse {
     info!("{:?}", query.0);
 
-    let start = Instant::now();
     let crawler = match Crawler::new(r"MBSD\{[0-9a-zA-Z]+\}", &query.url) {
         Ok(c) => c,
         Err(e) => {
@@ -57,8 +53,6 @@ async fn request(query: web::Query<Request>) -> HttpResponse {
             return HttpResponse::Ok().json(RequestResult::Error(e.to_string()));
         }
     };
-    let end = start.elapsed();
-    info!("Crawled time: {}ms", end.as_millis());
 
     // exclude xml file
     results.retain(|r| !r.url.as_str().contains(".xml"));
@@ -69,7 +63,6 @@ async fn request(query: web::Query<Request>) -> HttpResponse {
 
     HttpResponse::Ok().json(RequestResult::Ok(Result {
         crawler_results: results,
-        elapsed_ms: end.as_millis(),
     }))
 }
 

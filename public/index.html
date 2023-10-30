@@ -6,11 +6,94 @@
     <title>Dashboard</title>
   </head>
   <body>
+    <style>
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        table-layout: fixed;
+      }
+
+      th,
+      td {
+        padding: 5px 8px;
+        border: 1px solid #333;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+      }
+    </style>
     <script>
       fetch(
         "http://127.0.0.1:8080/request?url=https://mbsdsc2023-cid.github.io/sample-site"
-      ).then((res) => console.log(res.json()));
+      )
+        .then((res) => {
+          return res.json();
+        })
+        .then((res) => setUi(res))
+        .catch((e) => {
+          console.error(e);
+        });
+
+      function setUi(obj) {
+        // okが存在しない場合、errorが発生している
+        // 送られてきたエラーメッセージを表示
+        if (obj.ok == undefined) {
+          console.error(obj.error);
+          return;
+        }
+
+        let data = obj.ok;
+        console.log(data);
+        let crawler_results = data.crawler_results;
+
+        // 結果を元にテーブルを作成
+        // 見出しを含む列を上から順に作成
+        for (let i = 0; i < 1 + crawler_results.length; i++) {
+          let tr = document.createElement("tr");
+
+          // 見出し
+          if (i == 0) {
+            let headers = [
+              "URL",
+              "パラメータ",
+              "ページタイトル",
+              "検出キーワード",
+              "実行時間（ms）",
+            ];
+            for (let j = 0; j < headers.length; j++) {
+              let th = document.createElement("th");
+              th.innerText = headers[j];
+              tr.appendChild(th);
+            }
+          }
+          // それ以外
+          else {
+            // クローラの検出結果データ
+            let result = crawler_results[i - 1];
+
+            let url = result.url;
+            // パラメータの抽出
+            let params = new URL(url).searchParams;
+
+            let values = [
+              url, // URL
+              params.toString(), // パラメータ
+              result.page_title, // ページタイトル
+              result.targets.toString(), // 検出キーワード
+              result.elapsed_ms, // "実行時間"
+            ];
+            for (let j = 0; j < values.length; j++) {
+              let td = document.createElement("td");
+              td.innerText = values[j];
+              tr.appendChild(td);
+            }
+          }
+
+          // tableに列を挿入
+          document.getElementById("table").appendChild(tr);
+        }
+      }
     </script>
     <h1>Dashboard</h1>
+    <table id="table"></table>
   </body>
 </html>
