@@ -8,6 +8,10 @@
   </head>
   <body>
     <style>
+      body {
+        padding: 10px;
+      }
+
       table {
         table-layout: fixed;
       }
@@ -24,6 +28,9 @@
       //inputで入力されたURLを受け取り、fetch()で実行
       function fetchUrl() {
         const urlInput = document.getElementById("urlInput").value;
+        const execBtn = document.getElementById("execBtn");
+        execBtn.disabled = true;
+
         fetch(`http://127.0.0.1:8080/request?url=${urlInput}`)
           .then((res) => {
             return res.json();
@@ -31,6 +38,9 @@
           .then((res) => setUi(res))
           .catch((e) => {
             console.error(e);
+          })
+          .finally(() => {
+            execBtn.disabled = false;
           });
       }
 
@@ -45,8 +55,12 @@
         let tbody = document.getElementById("tbody");
 
         let data = obj.ok;
-        console.log(data);
         let crawler_results = data.crawler_results;
+
+        if (crawler_results.length == 0) {
+          alert("キーワードは検出されませんでした。");
+          return;
+        }
 
         // 結果を元にテーブルを作成
         // 見出しを含む列を上から順に作成
@@ -83,7 +97,7 @@
 
             let values = [
               url, // URL
-              params.toString(), // パラメータ
+              params.size == 0 ? "-" : params.toString(), // パラメータ
               result.page_title, // ページタイトル
               result.targets.toString(), // 検出キーワード
               result.elapsed_ms, // "実行時間"
@@ -102,23 +116,26 @@
       }
     </script>
 
-    <!--formでURLを受け取り、fech()に渡す -->
-    <h1>Dashboard</h1>
-    <h2>検索対象のURLを入力し、実行ボタンを押してください。</h2>
-    <form action=" " method="get" onsubmit="fetchUrl(); return false;">
-      <label class="label" for="url">URL:</label>
-      <input
-        class="input"
-        id="urlInput"
-        type="text"
-        required
-        style="width: 50%"
-      />
-      <button class="button is-link" type="submit">実行</button>
-    </form>
-    <h2 id="resultHeading" style="display: none"><br />検索結果の表示</h2>
-    <table class="table is-fullwidth">
-      <tbody id="tbody"></tbody>
-    </table>
+    <div class="content">
+      <h1 class="title">Dashboard</h1>
+      <label class="label"
+        >検索対象のURLを入力し、実行ボタンを押してください。</label
+      >
+      <form action=" " method="get" onsubmit="fetchUrl(); return false;">
+        <input
+          class="input"
+          id="urlInput"
+          type="text"
+          required
+          style="width: 90%"
+          placeholder="URLを入力..."
+        />
+        <button id="execBtn" class="button is-link" type="submit">実行</button>
+      </form>
+      <h2 id="resultHeading" style="display: none"><br />検索結果</h2>
+      <table class="table is-fullwidth">
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
   </body>
 </html>
