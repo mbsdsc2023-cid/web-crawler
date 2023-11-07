@@ -1,6 +1,6 @@
 [package]
 name = "web-crawler"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 description = "Web crawler tool"
 authors = ["mbsdsc2023-cid (Zakki <zakki0925224@gmail.com>)"]
